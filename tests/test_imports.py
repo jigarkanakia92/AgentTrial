@@ -10,7 +10,7 @@ def test_import_all_modules():
 def test_models_match_migration_shape():
     """news_articles has the exact columns from yahooscraper.md (plus the
     documented observability additions)."""
-    from db.models import NewsArticle, StockAnalysis
+    from db.models import NewsArticle, OptionData, StockAnalysis
 
     news_cols = {c.name for c in NewsArticle.__table__.columns}
     assert {
@@ -23,9 +23,18 @@ def test_models_match_migration_shape():
     assert {
         "id", "analysis_date", "ticker", "stock_name", "confidence_score",
         "sentiment", "swing_trading_candidate", "news_pointers",
-        "option_data_analysis", "confidence_after_news_and_option",
+        "option_data_id", "option_data_analysis", "confidence_after_news_and_option",
         "source_article_ids", "llm_persona_votes",
     } <= analysis_cols
+
+
+    option_cols = {c.name for c in OptionData.__table__.columns}
+    assert {
+        "id", "ticker", "source", "fetched_at", "expiration_date", "spot_price",
+        "atm_call_iv", "atm_put_iv", "total_call_open_interest", "total_put_open_interest",
+        "put_call_oi_ratio", "high_iv_skew_bearish", "status", "available_expirations",
+        "calls", "puts", "summary",
+    } == option_cols
 
 
 def test_persona_models_resolve_from_settings():

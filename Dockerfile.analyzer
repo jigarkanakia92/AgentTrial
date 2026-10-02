@@ -15,5 +15,6 @@ COPY common/ ./common/
 COPY db/ ./db/
 COPY analyzer/ ./analyzer/
 COPY alembic.ini ./
+COPY alembic/ ./alembic/
 
 CMD ["python", "-m", "analyzer.scheduler"]

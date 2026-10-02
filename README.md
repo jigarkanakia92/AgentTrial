@@ -6,7 +6,8 @@ A production-grade, containerized two-service system:
    topic listings, dedupes by URL, and stores raw news in Postgres.
 2. **Analyzer service** — an independent job that reads the last 16 hours of
    news, groups it by ticker, fans it out to **multiple LLM personas**, and
-   writes aggregated sentiment/rating rows.
+   writes aggregated sentiment/rating rows. It also pulls and stores
+   **per-ticker option-chain snapshots** for reuse and auditability.
 
 The two services share **only the database** — restart, scale, or redeploy
 either without touching the other.
@@ -98,7 +99,8 @@ validates it and falls back to built-in defaults with an error log.
           │        (only shared state)      │
           ▼                                 ▼
    ┌─────────────────────────────────────────────┐
-   │  PostgreSQL: news_articles, stock_analysis  │
+   │  PostgreSQL: news_articles, stock_analysis, │
+   │              option_data                    │
    └─────────────────────────────────────────────┘
    scraper: every 15 min   ·   analyzer: every 4 h (16 h lookback)
 ```
@@ -121,15 +123,15 @@ validates it and falls back to built-in defaults with an error log.
 │   ├── personas.py           #   3 personas, one NVIDIA model each
 │   ├── llm_client.py         #   AsyncOpenAI → NIM; retries; JSON repair
 │   ├── schemas.py            #   PersonaVerdict + defensive JSON extraction
-│   ├── options_data.py       #   yfinance options summary (best-effort)
+│   ├── options_data.py       #   yfinance chains → option_data + TTL reuse
 │   ├── pipeline.py           #   group → personas → aggregate → upsert
 │   └── scheduler.py
 ├── db/
-│   ├── models.py             # news_articles, stock_analysis (SQLAlchemy 2.0)
+│   ├── models.py             # news_articles, stock_analysis, option_data
 │   ├── repository.py         # idempotent ON CONFLICT writes, lazy engine
 │   └── bootstrap.py          # create-all for local SQLite dev
-├── alembic/                  # async migrations (0001_initial)
-├── tests/                    # 64 tests incl. simulated Yahoo DOM redesign
+├── alembic/                  # async migrations (0001_initial, 0002_option_data)
+├── tests/                    # DOM redesign, options, pipeline, migrations
 ├── docker-compose.yml · Dockerfile.scraper · Dockerfile.analyzer
 └── requirements*.txt · .env.example · Makefile
 ```
@@ -145,7 +147,99 @@ validates it and falls back to built-in defaults with an error log.
   unique `(analysis_date, ticker)` constraint dedupes re-runs), ticker,
   stock_name, confidence_score, sentiment, swing_trading_candidate,
   news_pointers, option_data_analysis, confidence_after_news_and_option,
-  plus `llm_persona_votes` (full per-persona JSON audit trail).
+  plus `llm_persona_votes` (full per-persona JSON audit trail) and nullable
+  `option_data_id` (the exact market-data snapshot used for this verdict).
+* **`option_data`** — historical option-chain snapshots indexed by ticker
+  and fetch time. Each fresh pull appends a row; retries of the same
+  `(ticker, fetched_at)` are idempotent and never overwrite existing data.
+
+## Options data by ticker
+
+The analyzer automatically fetches options for each news ticker **before**
+calling the LLM personas. It saves the underlying data separately from
+`stock_analysis.option_data_analysis`, which remains the LLM's commentary.
+You can also pull options without any news or LLM API key:
+
+```bash
+alembic upgrade head                                  # apply the new table/link
+python -m analyzer.options_data AAPL MSFT TSLA          # reuse fresh data if available
+python -m analyzer.options_data AAPL --refresh         # force a new Yahoo pull
+# or: make options-pull TICKERS="AAPL MSFT"
+```
+
+| Stored fields | Meaning |
+|---|---|
+| `id`, `ticker`, `source`, `fetched_at` | Snapshot ID, normalized uppercase symbol, Yahoo Finance, UTC fetch time |
+| `expiration_date`, `available_expirations` | Selected nearest expiry and all valid listed expiry dates |
+| `calls`, `puts` | Full chain for **the nearest expiry**, stored as JSONB records (JSON on SQLite) |
+| `spot_price`, `atm_call_iv`, `atm_put_iv` | Actual underlying price and nearest-strike IV; **IV is a fraction**, e.g. `0.25 = 25%` |
+| `total_call_open_interest`, `total_put_open_interest`, `put_call_oi_ratio` | Complete-chain OI totals and put/call OI ratio; unknown values stay null |
+| `high_iv_skew_bearish`, `summary` | Skew flag and compact text passed to the LLM personas |
+| `status` | `ok`, or provider-reported `no_options` with empty chains and null expiry |
+
+Contract records preserve provider fields such as `contractSymbol`,
+`strike`, `lastPrice`, `bid`, `ask`, `volume`, `openInterest`,
+`impliedVolatility`, `inTheMoney`, and `lastTradeDate`, plus any new columns.
+Pandas/numpy values are converted to JSON-safe scalars; NaN/Infinity/NaT
+become null and trade dates become ISO strings. `fetched_at` is the fetch
+time, **not** a guarantee that every contract's quote traded at that time.
+
+**Caching and failures:**
+
+* `OPTIONS_CACHE_TTL_SECONDS=1800` reuses a fresh saved snapshot for 30
+  minutes, including after a process restart. Set `0` to always pull.
+* `OPTIONS_FETCH_TIMEOUT_SECONDS=45` bounds how long analysis awaits Yahoo.
+  A timed-out provider thread may finish later, but cannot persist data
+  after its caller has timed out.
+* Expired/stale chains are not silently fed to the LLM. Caught provider
+  errors, empty chains for a listed expiry, and timeouts do not create
+  `no_options` rows or overwrite history; analysis continues without options.
+* A missing spot quote is **not** fabricated from option strikes; ATM
+  metrics stay null when price is unavailable.
+* If an options DB write fails, live data can still inform the analysis,
+  but `option_data_id` stays null (no dangling reference). Errors are logged.
+* The analysis link uses `ON DELETE SET NULL`, allowing old snapshots to be
+  pruned without deleting historical sentiment rows. No automatic retention
+  policy is imposed; history remains until you deliberately prune it.
+
+Retrieve stored data by ticker without contacting Yahoo:
+
+```python
+from db.repository import fetch_latest_option_data, fetch_option_data_history
+
+# Inside an async function:
+latest = await fetch_latest_option_data("AAPL")
+history = await fetch_option_data_history("AAPL", limit=20)
+if latest is not None:
+    print(latest.expiration_date, latest.calls, latest.puts)
+```
+
+```sql
+SELECT ticker, fetched_at, expiration_date, spot_price,
+       atm_call_iv, atm_put_iv, put_call_oi_ratio, calls, puts
+FROM option_data
+WHERE ticker = 'AAPL'
+ORDER BY fetched_at DESC
+LIMIT 1;
+```
+
+### Upgrade an existing deployment
+
+Migration `0002_option_data` creates the table and adds a nullable snapshot
+link to existing analysis rows; it preserves existing news and verdict data.
+For a local Alembic-managed database, run `alembic upgrade head`.
+For Docker:
+
+```bash
+docker compose stop analyzer
+docker compose build migrate analyzer
+docker compose run --rm migrate
+docker compose up -d analyzer
+```
+
+If an **old, unversioned** database was created with `python -m db.bootstrap`
+before this feature, back it up, then run `alembic stamp 0001_initial` once
+before `alembic upgrade head`. Do not stamp a fresh or already-versioned DB.
 
 ## Quick start
 
@@ -171,7 +265,7 @@ pip install -r requirements.txt -r requirements-dev.txt
 
 export DATABASE_URL=sqlite+aiosqlite:///./news_intel.db
 export LLM_API_KEY=nvapi-...                       # or OPENAI_API_KEY etc.
-python -m db.bootstrap                             # create tables
+alembic upgrade head                              # create/migrate tables
 
 python -m scraper.yahoo_news_scraper               # one scrape cycle
 python -m analyzer.pipeline                        # one analysis cycle
@@ -201,6 +295,14 @@ Highlights worth reading:
   and DOM drift all end in clean `RunReport`s; `run()` **never raises**.
 * `tests/test_llm_client.py` — NVIDIA model routing per persona, JSON-mode
   degradation, repair round-trips, transient-error retries.
+* `tests/test_options_data.py` / `tests/test_option_db.py` — real pandas
+  chain serialization, durable ticker caching, snapshot history, timeouts,
+  and DB/Yahoo failure isolation (provider I/O is faked).
+* `tests/test_analyzer_e2e.py` — saved options are passed to personas and
+  linked to the final verdict; missing options do not break news analysis.
+* `tests/test_migrations.py` — fresh install, existing-data preservation,
+  rollback/re-upgrade, and PostgreSQL JSONB/foreign-key DDL.
+
 
 ## Scraping etiquette (kept from the spec, enforced in code)
 

@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 from analyzer.config import AnalyzerSettings
 from analyzer.llm_client import LLMClient, PersonaError
-from analyzer.options_data import fetch_option_summary, fetch_stock_name
+from analyzer.options_data import fetch_option_data, fetch_stock_name
 from analyzer.schemas import PersonaVerdict
 from db import repository
 from db.models import NewsArticle
@@ -124,7 +124,8 @@ async def analyze_ticker(
 ) -> dict | None:
     """All-persona analysis for one ticker; None if every persona failed."""
     news_bundle = build_news_bundle(articles, settings.max_articles_per_ticker)
-    option_data = await fetch_option_summary(ticker)
+    option_snapshot = await fetch_option_data(ticker, settings=settings)
+    option_data = option_snapshot.summary if option_snapshot else None
 
     persona_results: dict[str, PersonaVerdict] = {}
     for persona_key in (
@@ -151,6 +152,7 @@ async def analyze_ticker(
     return {
         "ticker": ticker,
         "stock_name": stock_name,
+        "option_data_id": option_snapshot.id if option_snapshot else None,
         "source_article_ids": [str(a.id) for a in articles],
         **aggregated,
     }

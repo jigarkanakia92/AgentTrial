@@ -74,6 +74,8 @@ services:
       RISK_MODEL: ${RISK_MODEL:-nvidia/llama-3.1-nemotron-70b-instruct}
       SWING_MODEL: ${SWING_MODEL:-qwen/qwen2.5-32b-instruct}
       ANALYSIS_INTERVAL_MINUTES: ${ANALYSIS_INTERVAL_MINUTES:-240}
+      OPTIONS_CACHE_TTL_SECONDS: ${OPTIONS_CACHE_TTL_SECONDS:-1800}
+      OPTIONS_FETCH_TIMEOUT_SECONDS: ${OPTIONS_FETCH_TIMEOUT_SECONDS:-45}
     depends_on:
       migrate:
         condition: service_completed_successfully

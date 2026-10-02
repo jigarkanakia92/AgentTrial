@@ -1,4 +1,4 @@
-.PHONY: install install-dev test scrape-once analyze-once run-scraper run-analyzer migrate compose-up compose-down
+.PHONY: install install-dev test scrape-once analyze-once run-scraper run-analyzer migrate compose-up compose-down options-pull
 
 install:
 	python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt -r requirements-dev.txt
@@ -19,6 +19,9 @@ run-scraper:            ## long-running scraper service
 
 run-analyzer:           ## long-running analyzer service
 	python -m analyzer.scheduler
+
+options-pull:           ## e.g. make options-pull TICKERS="AAPL MSFT"
+	python -m analyzer.options_data $(TICKERS)
 
 migrate:
 	alembic upgrade head

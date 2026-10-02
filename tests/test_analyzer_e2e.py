@@ -66,13 +66,13 @@ def fake_llm(monkeypatch):
 
     monkeypatch.setattr(pipeline_module.LLMClient, "ask_persona", fake_ask)
     # options data "unavailable" — pipeline must continue without it
-    async def no_opts(ticker):
+    async def no_opts(ticker, **kwargs):
         return None
 
     async def no_name(ticker):
         return "Fake Corp"
 
-    monkeypatch.setattr(pipeline_module, "fetch_option_summary", no_opts)
+    monkeypatch.setattr(pipeline_module, "fetch_option_data", no_opts)
     monkeypatch.setattr(pipeline_module, "fetch_stock_name", no_name)
     return calls
 
@@ -152,7 +152,7 @@ async def test_all_personas_failing_leaves_articles_unprocessed(db, monkeypatch)
 
     monkeypatch.setattr(pipeline_module.LLMClient, "ask_persona", failing_ask)
     monkeypatch.setattr(
-        pipeline_module, "fetch_option_summary", _async_none
+        pipeline_module, "fetch_option_data", _async_none
     )
     monkeypatch.setattr(
         pipeline_module, "fetch_stock_name", _async_none
@@ -171,3 +171,88 @@ async def test_all_personas_failing_leaves_articles_unprocessed(db, monkeypatch)
 
 async def _async_none(*a, **k):
     return None
+
+
+async def test_option_chain_is_saved_linked_and_reused_by_analysis(
+    option_db, option_provider, monkeypatch
+):
+    seen_options = []
+
+    async def fake_ask(self, persona_key, ticker, news_bundle, option_data=None):
+        seen_options.append(option_data)
+        return PersonaVerdict.model_validate(VERDICTS[persona_key])
+
+    monkeypatch.setattr(pipeline_module.LLMClient, "ask_persona", fake_ask)
+    await _seed(option_db, "Apple earnings with option chain", "AAPL")
+    settings = AnalyzerSettings(llm_api_key="k")
+    summary = await run_analysis_job(settings)
+    assert summary.tickers_analyzed == 1 and summary.tickers_failed == 0
+    snapshot = await repository.fetch_latest_option_data("AAPL")
+    assert snapshot is not None and snapshot.calls and snapshot.puts
+    assert len(seen_options) == 3
+    assert all(value == snapshot.summary for value in seen_options)
+    async with option_db.connect() as connection:
+        assert await connection.scalar(select(StockAnalysis.option_data_id)) == snapshot.id
+        confidence = await connection.scalar(select(StockAnalysis.confidence_after_news_and_option))
+        assert float(confidence) == round(round((80 + 60 + 90) / 3, 2) * 0.85, 2)
+
+    # New news inside the TTL reuses the SAME saved chain, not another pull.
+    await _seed(option_db, "Apple followup news", "AAPL")
+    assert (await run_analysis_job(settings)).tickers_analyzed == 1
+    assert len(option_provider.chain_calls) == 1
+    assert len(await repository.fetch_option_data_history("AAPL")) == 1
+
+
+async def test_option_write_failure_does_not_break_news_analysis(
+    option_db, option_provider, monkeypatch
+):
+    async def fake_ask(self, persona_key, ticker, news_bundle, option_data=None):
+        assert option_data is not None
+        return PersonaVerdict.model_validate(VERDICTS[persona_key])
+
+    async def failing_write(data):
+        raise RuntimeError("option data write temporarily unavailable")
+
+    monkeypatch.setattr(pipeline_module.LLMClient, "ask_persona", fake_ask)
+    monkeypatch.setattr(repository, "insert_option_data", failing_write)
+    await _seed(option_db, "Apple news despite option DB issue", "AAPL")
+    summary = await run_analysis_job(AnalyzerSettings(llm_api_key="k"))
+    assert summary.tickers_analyzed == 1 and summary.error is None
+    assert await repository.fetch_option_data_history("AAPL") == []
+    async with option_db.connect() as connection:
+        assert await connection.scalar(select(StockAnalysis.option_data_id)) is None
+        assert await connection.scalar(select(StockAnalysis.ticker)) == "AAPL"
+
+
+async def test_yahoo_options_failure_keeps_news_only_analysis_working(
+    option_db, option_provider, monkeypatch
+):
+    option_provider.fail = "chain"
+
+    async def fake_ask(self, persona_key, ticker, news_bundle, option_data=None):
+        assert option_data is None
+        return PersonaVerdict.model_validate(VERDICTS[persona_key])
+
+    monkeypatch.setattr(pipeline_module.LLMClient, "ask_persona", fake_ask)
+    await _seed(option_db, "Apple news despite Yahoo failure", "AAPL")
+    summary = await run_analysis_job(AnalyzerSettings(llm_api_key="k"))
+    assert summary.tickers_analyzed == 1 and summary.articles_marked_processed == 1
+    assert await repository.fetch_option_data_history("AAPL") == []
+
+
+async def test_options_are_retained_even_if_all_llm_personas_fail(
+    option_db, option_provider, monkeypatch
+):
+    from analyzer.llm_client import PersonaError
+
+    async def failing_ask(self, *args, **kwargs):
+        raise PersonaError("LLM provider unavailable")
+
+    monkeypatch.setattr(pipeline_module.LLMClient, "ask_persona", failing_ask)
+    await _seed(option_db, "Apple chain independent of LLM result", "AAPL")
+    summary = await run_analysis_job(AnalyzerSettings())
+    assert summary.tickers_failed == 1 and summary.articles_marked_processed == 0
+    snapshot = await repository.fetch_latest_option_data("AAPL")
+    assert snapshot is not None and snapshot.calls and snapshot.puts
+    since = datetime.now(timezone.utc) - timedelta(hours=16)
+    assert len(await repository.fetch_unprocessed_articles(since)) == 1

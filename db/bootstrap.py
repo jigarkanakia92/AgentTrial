@@ -2,9 +2,9 @@
 
 `python -m db.bootstrap`
 
-Production/Docker should use Alembic (`alembic upgrade head`); this script
-is for `DATABASE_URL=sqlite+aiosqlite:///./news_intel.db` style local runs
-where migrations are overkill.
+Use Alembic (`alembic upgrade head`) for existing databases, including
+local ones. This script only creates missing tables; it does NOT add new
+columns such as stock_analysis.option_data_id to an existing table.
 """
 from __future__ import annotations
 

@@ -53,6 +53,10 @@ class AnalyzerSettings(BaseSettings):
         validation_alias=AliasChoices("SWING_MODEL", "MODEL_SWING_TRADER"),
     )
 
+    # --- Yahoo options (persistent, ticker-keyed cache) ---------------------
+    options_cache_ttl_seconds: int = Field(default=1800, ge=0)
+    options_fetch_timeout_seconds: float = Field(default=45.0, gt=0)
+
     # --- pipeline --------------------------------------------------------------
     lookback_hours: int = 16
     max_articles_per_ticker: int = 15

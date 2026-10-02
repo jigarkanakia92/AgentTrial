@@ -14,7 +14,7 @@ Design rules (both services depend on this, so it must be boring):
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Iterable, Sequence
 
 from loguru import logger
@@ -34,7 +34,7 @@ from tenacity import (
 )
 
 from common.config import DatabaseSettings
-from db.models import NewsArticle, StockAnalysis, utc_midnight, utcnow
+from db.models import NewsArticle, OptionData, StockAnalysis, utc_midnight, utcnow
 
 # ---------------------------------------------------------------------------
 # Lazy engine management
@@ -225,6 +225,102 @@ async def mark_articles_processed(ids: Iterable[uuid.UUID]) -> int:
 
 
 # ---------------------------------------------------------------------------
+# option_data (immutable snapshots; each fresh pull retains history)
+# ---------------------------------------------------------------------------
+
+
+def _option_ticker(ticker: str) -> str:
+    ticker = ticker.strip().upper()
+    if not ticker or len(ticker) > 20:
+        raise ValueError("ticker must contain 1–20 characters")
+    return ticker
+
+
+async def insert_option_data(data: dict) -> uuid.UUID:
+    """Save a snapshot and return its ID; retrying the same fetch is safe.
+
+    Values are frozen BEFORE the retried transaction, so a transient DB
+    failure cannot create a new timestamp/ID and duplicate the snapshot.
+    An existing (ticker, fetched_at) snapshot is never overwritten.
+    """
+    allowed = {column.name for column in OptionData.__table__.columns}
+    row = {key: value for key, value in data.items() if key in allowed}
+    row["ticker"] = _option_ticker(row["ticker"])
+    row["id"] = row.get("id") or uuid.uuid4()
+    fetched_at = row.get("fetched_at") or utcnow()
+    if fetched_at.tzinfo is None:
+        fetched_at = fetched_at.replace(tzinfo=timezone.utc)
+    row["fetched_at"] = fetched_at.astimezone(timezone.utc)
+    return await _insert_option_data_row(row)
+
+
+@_db_retry
+async def _insert_option_data_row(row: dict) -> uuid.UUID:
+    async with _sf()() as session:
+        dialect = get_engine().dialect.name
+        stmt = None
+        if dialect == "postgresql":
+            from sqlalchemy.dialects.postgresql import insert
+
+            stmt = insert(OptionData).values(**row)
+        elif dialect == "sqlite":
+            from sqlalchemy.dialects.sqlite import insert
+
+            stmt = insert(OptionData).values(**row)
+
+        key_query = select(OptionData.id).where(
+            OptionData.ticker == row["ticker"],
+            OptionData.fetched_at == row["fetched_at"],
+        )
+        if stmt is not None:
+            await session.execute(
+                stmt.on_conflict_do_nothing(
+                    index_elements=[OptionData.ticker, OptionData.fetched_at]
+                )
+            )
+        else:
+            existing_id = (await session.execute(key_query)).scalar_one_or_none()
+            if existing_id is None:
+                session.add(OptionData(**row))
+                await session.flush()
+        snapshot_id = (await session.execute(key_query)).scalar_one()
+        await session.commit()
+        return snapshot_id
+
+
+@_db_retry
+async def fetch_latest_option_data(
+    ticker: str, *, since: datetime | None = None, source: str | None = None
+) -> OptionData | None:
+    """Newest saved snapshot for a ticker, optionally bounded by freshness."""
+    async with _sf()() as session:
+        stmt = select(OptionData).where(OptionData.ticker == _option_ticker(ticker))
+        if since is not None:
+            if since.tzinfo is None:
+                since = since.replace(tzinfo=timezone.utc)
+            stmt = stmt.where(OptionData.fetched_at >= since.astimezone(timezone.utc))
+        if source is not None:
+            stmt = stmt.where(OptionData.source == source)
+        result = await session.execute(stmt.order_by(OptionData.fetched_at.desc()).limit(1))
+        return result.scalars().first()
+
+
+@_db_retry
+async def fetch_option_data_history(ticker: str, *, limit: int = 100) -> list[OptionData]:
+    """Saved snapshots newest-first; no Yahoo request is made."""
+    if limit < 1:
+        raise ValueError("limit must be positive")
+    async with _sf()() as session:
+        result = await session.execute(
+            select(OptionData)
+            .where(OptionData.ticker == _option_ticker(ticker))
+            .order_by(OptionData.fetched_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+
+# ---------------------------------------------------------------------------
 # stock_analysis
 # ---------------------------------------------------------------------------
 
@@ -238,6 +334,7 @@ def _analysis_row(data: dict) -> dict:
         "sentiment",
         "swing_trading_candidate",
         "news_pointers",
+        "option_data_id",
         "option_data_analysis",
         "confidence_after_news_and_option",
         "source_article_ids",
@@ -247,6 +344,7 @@ def _analysis_row(data: dict) -> dict:
     row.setdefault("analysis_date", utc_midnight())
     row.setdefault("source_article_ids", [])
     row.setdefault("llm_persona_votes", {})
+    row.setdefault("option_data_id", None)
     # news_pointers may arrive as a list from the aggregator; the column is
     # Text — coerce at the boundary (detail remains in llm_persona_votes).
     if isinstance(row.get("news_pointers"), (list, tuple)):
@@ -260,6 +358,7 @@ _ANALYSIS_MUTABLE_COLUMNS = (
     "sentiment",
     "swing_trading_candidate",
     "news_pointers",
+    "option_data_id",
     "option_data_analysis",
     "confidence_after_news_and_option",
     "source_article_ids",
