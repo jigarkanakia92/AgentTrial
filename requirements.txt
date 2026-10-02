@@ -27,4 +27,4 @@ feedparser>=6.0,<7           # RSS fallback strategy (DOM-drift insurance)
 # --- Analyzer service ------------------------------------------------------
 openai>=1.40,<2              # OpenAI-compatible client -> NVIDIA NIM endpoint
 yfinance>=0.2.40,<0.3        # options-chain / market data (best effort)
-apscheduler>=3.10,<4         # 4.x is a rewrite — pinned to 3.x
+apscheduler>=3.10,<4         # 4.x is a rewrite — pinned to 3.x 
