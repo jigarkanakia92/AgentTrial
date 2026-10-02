@@ -1,0 +1,29 @@
+# ============================================================================
+# Scraper image — includes Playwright + Chromium for the 403/challenge
+# fallback renderer. Heavy on purpose; the analyzer image stays slim.
+# ============================================================================
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PLAYWRIGHT_BROWSING_CONTEXT=/ms-playwright
+
+WORKDIR /app
+
+# System deps for Chromium (kept minimal)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    wget gnupg libnss3 libatk-bridge2.0-0 libxss1 libasound2 libgbm1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install -r requirements.txt \
+    && playwright install --with-deps chromium
+
+COPY common/ ./common/
+COPY db/ ./db/
+COPY scraper/ ./scraper/
+COPY alembic.ini ./
+
+# selectors.yaml is expected to be volume-mounted for hot-patching.
+
+CMD ["python", "-m", "scraper.scheduler"]

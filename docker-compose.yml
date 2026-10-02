@@ -1,0 +1,97 @@
+# ============================================================================
+# Two fully independent services + shared Postgres.
+#   scraper  — every SCRAPER_INTERVAL_MINUTES (default 15)
+#   analyzer — every ANALYSIS_INTERVAL_MINUTES  (default 240)
+# They talk ONLY through the database, so either can be restarted/scaled
+# without touching the other.
+#
+#   cp .env.example .env   # fill in DB_PASSWORD + LLM_API_KEY (nvapi-...)
+#   docker compose up --build -d
+#   docker compose logs -f scraper analyzer
+#   docker compose --profile tools up -d pgadmin   # optional DB UI
+# ============================================================================
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: news_intel
+      POSTGRES_USER: news_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U news_user -d news_intel"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.analyzer
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://news_user:${DB_PASSWORD}@postgres:5432/news_intel
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile.scraper
+    environment:
+      DATABASE_URL: postgresql+asyncpg://news_user:${DB_PASSWORD}@postgres:5432/news_intel
+      SCRAPER_INTERVAL_MINUTES: ${SCRAPER_INTERVAL_MINUTES:-15}
+      SCRAPER_SELECTORS_FILE: /app/scraper/selectors.yaml
+      SCRAPER_STORE_RAW_HTML: "false"
+    volumes:
+      # Hot-patch selectors without rebuilding: edit ./scraper/selectors.yaml
+      # on the host, then `docker compose restart scraper`.
+      - ./scraper/selectors.yaml:/app/scraper/selectors.yaml:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+
+  analyzer:
+    build:
+      context: .
+      dockerfile: Dockerfile.analyzer
+    environment:
+      DATABASE_URL: postgresql+asyncpg://news_user:${DB_PASSWORD}@postgres:5432/news_intel
+      # --- OpenAI-compatible LLM (NVIDIA NIM by default) ---
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://integrate.api.nvidia.com/v1}
+      LLM_API_KEY: ${LLM_API_KEY:?set LLM_API_KEY (nvapi-...) in .env}
+      ANALYST_MODEL: ${ANALYST_MODEL:-meta/llama-3.3-70b-instruct}
+      RISK_MODEL: ${RISK_MODEL:-nvidia/llama-3.1-nemotron-70b-instruct}
+      SWING_MODEL: ${SWING_MODEL:-qwen/qwen2.5-32b-instruct}
+      ANALYSIS_INTERVAL_MINUTES: ${ANALYSIS_INTERVAL_MINUTES:-240}
+      OPTIONS_CACHE_TTL_SECONDS: ${OPTIONS_CACHE_TTL_SECONDS:-1800}
+      OPTIONS_FETCH_TIMEOUT_SECONDS: ${OPTIONS_FETCH_TIMEOUT_SECONDS:-45}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  pgadmin:
+    image: dpage/pgadmin4
+    profiles: ["tools"]
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+volumes:
+  pgdata:

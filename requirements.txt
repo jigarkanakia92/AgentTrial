@@ -1,0 +1,30 @@
+# ============================================================================
+# Yahoo Finance News Intelligence Platform — shared requirements
+# Docker images install this file; local dev: pip install -r requirements.txt
+# Range-pinned on purpose: avoids resolution breakage across Python patch
+# releases while still guarding against breaking major versions.
+# ============================================================================
+
+# --- Shared core -----------------------------------------------------------
+sqlalchemy[asyncio]>=2.0.30,<2.1
+asyncpg>=0.29,<0.32          # PostgreSQL async driver (prod)
+alembic>=1.13,<2             # schema migrations
+pydantic>=2.8,<3
+pydantic-settings>=2.3,<3
+loguru>=0.7,<0.8
+tenacity>=8.2,<10            # exponential backoff / retries
+PyYAML>=6.0,<7               # hot-patchable selector registry
+
+# --- Scraper service -------------------------------------------------------
+curl_cffi>=0.7,<0.9          # TLS/JA3 fingerprint spoofing fast path
+selectolax>=0.3.21,<0.4      # very fast HTML parsing (primary)
+httpx>=0.27,<1               # plain HTTP fallback backend (no TLS spoof)
+playwright>=1.45,<2          # browser rendering fallback (403/challenge)
+playwright-stealth>=1.0.6,<2 # NOTE: 2.x changed the API — pinned to 1.x
+aiolimiter>=1.1,<2           # async token bucket (rate limiting)
+feedparser>=6.0,<7           # RSS fallback strategy (DOM-drift insurance)
+
+# --- Analyzer service ------------------------------------------------------
+openai>=1.40,<2              # OpenAI-compatible client -> NVIDIA NIM endpoint
+yfinance>=0.2.40,<0.3        # options-chain / market data (best effort)
+apscheduler>=3.10,<4         # 4.x is a rewrite — pinned to 3.x
