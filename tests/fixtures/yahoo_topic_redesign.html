@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<!--
+  Simulated FUTURE Yahoo redesign: brand-new class names, div-based cards,
+  no li.js-stream-content / storyitem anywhere. CSS strategies find NOTHING.
+  The page still embeds JSON-LD — which is exactly why the parser survives.
+-->
+<head><title>Market News</title>
+<script type="application/ld+json">
+[
+  {"@context":"https://schema.org","@type":"NewsArticle",
+   "headline":"Amazon expands same-day logistics network ahead of holidays (AMZN)",
+   "url":"https://finance.yahoo.com/news/amazon-same-day-logistics-expansion-180011001.html",
+   "description":"The retailer is opening 40 new facilities to shorten last-mile delivery times.",
+   "datePublished":"2026-10-01T18:00:11Z"},
+  {"@context":"https://schema.org","@type":"NewsArticle",
+   "headline":"Meta pitches advertisers on AI-generated campaigns (META)",
+   "url":"https://finance.yahoo.com/news/meta-ai-ad-campaigns-190022002.html",
+   "description":"Early tests show higher conversion for fully automated ad creative.",
+   "datePublished":"2026-10-01T19:00:22Z"},
+  {"@context":"https://schema.org","@type":"NewsArticle",
+   "headline":"Alphabet cloud growth reaccelerates on AI workloads (GOOGL)",
+   "url":"https://finance.yahoo.com/news/alphabet-cloud-reaccelerates-200033003.html",
+   "description":"Google Cloud backlog hit a record as enterprises move AI training to GCP.",
+   "datePublished":"2026-10-01T20:00:33Z"},
+  {"@context":"https://schema.org","@type":"NewsArticle",
+   "headline":"Netflix plans a lower-priced ad tier refresh",
+   "mainEntityOfPage":{"@id":"https://finance.yahoo.com/news/netflix-ad-tier-refresh-210044004.html"},
+   "description":"The streaming giant will test new pricing with select markets next month.",
+   "datePublished":"2026-10-01T21:00:44Z"}
+]
+</script>
+</head>
+<body>
+<div id="app-root">
+  <div class="yf-1r4fj feed-container">
+    <div class="yf-2k9dx news-card">
+      <div class="yf-3m1eq headline-wrap">
+        <a data-testid="headline-link" href="/news/amazon-same-day-logistics-expansion-180011001.html">Amazon expands same-day logistics network ahead of holidays (AMZN)</a>
+      </div>
+      <span class="yf-time" data-ts="1799256011000"></span>
+    </div>
+    <div class="yf-2k9dx news-card">
+      <div class="yf-3m1eq headline-wrap">
+        <a data-testid="headline-link" href="/news/meta-ai-ad-campaigns-190022002.html">Meta pitches advertisers on AI-generated campaigns (META)</a>
+      </div>
+    </div>
+    <div class="yf-2k9dx news-card">
+      <div class="yf-3m1eq headline-wrap">
+        <a data-testid="headline-link" href="/news/alphabet-cloud-reaccelerates-200033003.html">Alphabet cloud growth reaccelerates on AI workloads (GOOGL)</a>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

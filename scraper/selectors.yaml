@@ -1,0 +1,79 @@
+# ============================================================================
+# Selector registry — the ONLY file you should ever need to touch when Yahoo
+# redesigns their news listing DOM.
+#
+# Hot-patch procedure (no code change, no rebuild):
+#   1. Inspect the new DOM in browser devtools.
+#   2. Edit the FIRST entry of `selector_sets` (add a new set ABOVE it if you
+#      want to keep the old one as a fallback).
+#   3. `docker compose restart scraper` (or wait for the next cycle — the
+#      file is re-read every run when SCRAPER_SELECTORS_FILE points here and
+#      the file mtime changes).
+#
+# If this file is missing, malformed, or fails validation the scraper logs a
+# warning and falls back to the built-in defaults in scraper/selectors.py —
+# a bad edit here can never take the bot down.
+#
+# Parsing order per page (first strategy yielding >= min_articles wins):
+#   1. each entry of `selector_sets`, in order   (CSS selectors)
+#   2. embedded JSON-LD   (survives almost any CSS redesign)
+#   3. RSS feeds listed under `rss_feeds`      (survives any HTML change)
+#   4. heuristic anchor scan                    (last resort)
+# ============================================================================
+
+version: 2
+updated: "2026-10-02"
+
+page:
+  list_url_template: "https://finance.yahoo.com/topic/stock-market-news/{page}/"
+  rss_feeds:
+    - "https://finance.yahoo.com/news/rssindex"
+    - "https://finance.yahoo.com/topic/stock-market-news/rssindex"
+
+# A page is only considered "drifted" if the HTML looks healthy but NO
+# strategy manages to extract at least this many articles.
+min_articles_per_strategy: 3
+
+# URL is normalized (query+fragment stripped) before hashing for dedup.
+allowed_url_hosts:
+  - finance.yahoo.com
+
+ticker_extraction:
+  quote_link_pattern: "/quote/"
+  headline_ticker_regex: "\\(([A-Z]{1,6}(?:[-.][A-Z]{1,3})?)\\)"
+  stoplist:
+    - AI
+    - CEO
+    - CFO
+    - CTO
+    - COO
+    - IPO
+    - SEC
+    - ETF
+    - NYSE
+    - NASDAQ
+    - DJIA
+    - EPS
+    - GDP
+    - FED
+    - IRA
+    - LLC
+    - Inc
+    - Corp
+
+selector_sets:
+  # --- Set 1: current Yahoo Finance stream markup (verify in devtools) -----
+  - name: yahoo-stream-2024
+    card: "li.js-stream-content, div[data-testid='storyitem'], div.story-item"
+    headline: "h3 a, a"
+    description: "p"
+    time: "time[datetime], time[data-timestamp]"
+    ticker_link: "a[href*='/quote/']"
+
+  # --- Set 2: Yahoo's newer `yf-` web-component markup ----------------------
+  - name: yahoo-web-components
+    card: "li.stream-item, yf-fin-stream-item, section article, article"
+    headline: "h3 a, h2 a, a[aria-label], a"
+    description: "p"
+    time: "time[datetime]"
+    ticker_link: "a[href*='/quote/']"

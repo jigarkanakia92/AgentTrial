@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Yahoo Finance - Top News</title>
+    <link>https://finance.yahoo.com/</link>
+    <item>
+      <title><![CDATA[Oil prices slide as OPEC+ signals output increase (XOM)]]></title>
+      <link>https://finance.yahoo.com/news/oil-prices-slide-opec-080011999.html</link>
+      <pubDate>Thu, 01 Oct 2026 08:00:11 +0000</pubDate>
+      <description><![CDATA[Crude fell 2% after the cartel hinted at easing voluntary cuts.]]></description>
+    </item>
+    <item>
+      <title><![CDATA[Boeing gains after record orders at Paris showcase]]></title>
+      <link>https://finance.yahoo.com/news/boeing-record-orders-paris-090022888.html</link>
+      <pubDate>Thu, 01 Oct 2026 09:00:22 +0000</pubDate>
+      <description><![CDATA[BA shares rose 3% premarket on the order backlog.]]></description>
+    </item>
+    <item>
+      <title><![CDATA[Goldman lifts S&P 500 year-end target (GS)]]></title>
+      <link>https://finance.yahoo.com/news/goldman-lifts-sp-target-100033777.html</link>
+      <pubDate>Thu, 01 Oct 2026 10:00:33 +0000</pubDate>
+      <description><![CDATA[Strategists cited resilient earnings and disinflation.]]></description>
+    </item>
+  </channel>
+</rss>
